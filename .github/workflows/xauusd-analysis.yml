@@ -41,7 +41,7 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
         run: |
-          python src/main.py --mode live --session AUTO
+          python src/main.py --mode live
       
       - name: Upload database artifact
         uses: actions/upload-artifact@v4
