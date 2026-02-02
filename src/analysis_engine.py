@@ -4,8 +4,10 @@ from .news_loader import fetch_economic_calendar, get_seconds_to_impact
 from .smc_detector import SMC_Detector
 from .ml_classifier import SetupSuccessClassifier
 
-class XAUUSD_Analyst:
-    def __init__(self, risk_manager):
+class MarketAnalyst:
+    def __init__(self, risk_manager, instrument_name="XAU/USD", asset_class="forex"):
+        self.instrument_name = instrument_name
+        self.asset_class = asset_class
         self.risk_manager = risk_manager
         self.news_df = fetch_economic_calendar()
         self.ml_classifier = SetupSuccessClassifier()
@@ -18,13 +20,26 @@ class XAUUSD_Analyst:
         smc = SMC_Detector(df)
         smc_data = smc.analyze_all()
         
+        # Asset-specific thresholds
+        if self.asset_class == "crypto":
+            premium_threshold = 0.6  # Crypto more volatile, be lenient
+        else:
+            premium_threshold = 0.5  # Forex standard
+        
         # Check Premium/Discount Zone (only trade shorts in premium)
         pd_zone = smc_data['premium_discount']
-        if pd_zone['zone'] not in ['Premium', 'Premium (Weak)']:
+        
+        # For crypto, we're more lenient with premium zones
+        if self.asset_class == "crypto":
+            valid_zones = ['Premium', 'Premium (Weak)', 'Equilibrium']
+        else:
+            valid_zones = ['Premium', 'Premium (Weak)']
+        
+        if pd_zone['zone'] not in valid_zones:
             return {
                 "verdict": "NO TRADE",
                 "reason": f"Not in Premium Zone (Current: {pd_zone['zone']})",
-                "data": {"smc_zone": pd_zone['zone']},
+                "data": {"smc_zone": pd_zone['zone'], "instrument": self.instrument_name},
                 "smc": smc_data
             }
         
@@ -80,7 +95,7 @@ class XAUUSD_Analyst:
         is_exhaustion = upper_wick > (body_size * 1.5) # Wick is 1.5x body
         
         if not liquidity_event:
-            return {"verdict": "NO TRADE", "reason": "No Liquidity Sweep", "data": {}}
+            return {"verdict": "NO TRADE", "reason": "No Liquidity Sweep", "data": {"instrument": self.instrument_name}}
 
         # --- STEP 3: CONFIRMATION METRICS ---
         rsi_div = False
