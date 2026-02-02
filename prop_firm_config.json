@@ -1,0 +1,27 @@
+{
+  "account_settings": {
+    "currency": "USD",
+    "initial_balance": 100000,
+    "leverage": 100
+  },
+  "risk_rules_locked": {
+    "max_daily_drawdown_percent": 1.0,
+    "max_total_drawdown_percent": 5.0,
+    "risk_per_trade_min_percent": 0.25,
+    "risk_per_trade_max_percent": 0.50,
+    "max_trades_per_day": 2,
+    "consecutive_loss_stop_count": 2,
+    "min_risk_reward_ratio": 1.5
+  },
+  "trading_hours": {
+    "london_start_utc": "07:00",
+    "london_end_utc": "11:00",
+    "new_york_start_utc": "13:00",
+    "new_york_end_utc": "16:00"
+  },
+  "filters": {
+    "news_avoidance_minutes": 15,
+    "max_spread_pips": 2.0,
+    "min_probability_threshold": 70
+  }
+}
