@@ -1,4 +1,4 @@
-name: XAUUSD AI Analysis
+name: Multi-Asset AI Analysis
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
-  analyze-market:
+  analyze-markets:
     runs-on: ubuntu-latest
     
     steps:
