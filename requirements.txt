@@ -1,0 +1,10 @@
+pandas
+yfinance
+colorama
+tabulate
+numpy
+streamlit
+plotly
+watchdog
+xgboost
+scikit-learn
