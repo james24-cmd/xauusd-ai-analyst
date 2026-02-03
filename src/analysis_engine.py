@@ -105,23 +105,16 @@ class MarketAnalyst:
         if not rsi_div and not is_exhaustion:
              return {"verdict": "NO TRADE", "reason": "No Confirmation (RSI/Wick)", "data": {}}
 
-        # --- STEP 4: PROBABILITY (ML-Enhanced) ---
-        # Get ML prediction
-        ml_prob = self.ml_classifier.predict_success_probability(setup_data, smc_data)
-        
-        # Use ML probability if model is trained, otherwise use rule-based
-        prob_score = ml_prob
-        
-        # --- BUILD PLAN ---
+        # --- STEP 4: BUILD SETUP DATA FOR ML ---
+        # Calculate entry/SL/TP first
         entry_price = current_candle['Close']
-        stop_loss = current_candle['High'] + (current_candle['High'] - current_candle['Low']) * 0.1 # Slight buffer
+        stop_loss = current_candle['High'] + (current_candle['High'] - current_candle['Low']) * 0.1
         risk = stop_loss - entry_price
-        tp1 = entry_price - (risk * 2) # 1:2 RR
-        
+        tp1 = entry_price - (risk * 2)
         rr_ratio = (entry_price - tp1) / risk if risk > 0 else 0
         
         setup_data = {
-            "session": "Unknown", # Filled by main
+            "session": "Unknown",
             "htf_trend": trend,
             "htf_structure": "LH",
             "key_resistance_level": float(recent_high),
@@ -132,9 +125,14 @@ class MarketAnalyst:
             "rsi_divergence": bool(rsi_div),
             "vwap_distance": float(abs(current_candle['Close'] - current_candle['VWAP'])),
             "volume_spike": False,
-            "spread_value": 0.0, # Placeholder
+            "spread_value": 0.0,
             "news_event_proximity_minutes": 999
         }
+        
+        # --- STEP 5: PROBABILITY (ML-Enhanced) ---
+        ml_prob = self.ml_classifier.predict_success_probability(setup_data, smc_data)
+        prob_score = ml_prob
+        
         
         # Risk Check
         is_valid, risk_msg = self.risk_manager.validate_setup(rr_ratio, spread=0.1, prob_score=prob_score)
