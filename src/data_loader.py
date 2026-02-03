@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import time
 
 def calculate_rsi(series, period=14):
     delta = series.diff()
@@ -28,10 +29,23 @@ def fetch_data(symbol="GC=F", period="5d", interval="15m"):
     Defaults to Gold Futures (GC=F) which tracks XAUUSD.
     """
     print(f"Fetching data for {symbol}...")
-    df = yf.download(symbol, period=period, interval=interval, progress=False)
     
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            df = yf.download(symbol, period=period, interval=interval, progress=False)
+            
+            if not df.empty:
+                break
+                
+            print(f"Attempt {attempt+1}/{max_retries} failed: Empty DataFrame. Retrying...")
+        except Exception as e:
+            print(f"Attempt {attempt+1}/{max_retries} failed: {e}. Retrying...")
+            
+        time.sleep(2)
+        
     if df.empty:
-        raise ValueError("No data fetched. Check internet connection or symbol.")
+        raise ValueError(f"Failed to fetch data for {symbol} after {max_retries} attempts.")
         
     # YFinance MultiIndex cleanup
     if isinstance(df.columns, pd.MultiIndex):
