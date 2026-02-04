@@ -5,55 +5,24 @@ from .smc_detector import SMC_Detector
 from .ml_classifier import SetupSuccessClassifier
 
 class MarketAnalyst:
-    def __init__(self, risk_manager, instrument_name="XAU/USD", asset_class="forex"):
+    def __init__(self, risk_manager, instrument_name="XAU/USD", asset_class="forex", target_direction="SHORT"):
         self.instrument_name = instrument_name
         self.asset_class = asset_class
         self.risk_manager = risk_manager
         self.news_df = fetch_economic_calendar()
         self.ml_classifier = SetupSuccessClassifier()
+        self.target_direction = target_direction  # 'SHORT', 'LONG', 'BOTH'
 
     def analyze_market(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         Executes the 5-step Master System Prompt logic + SMC Analysis.
+        Now supports LONG (Bullish) and SHORT (Bearish) based on target_direction.
         """
         # --- SMC ANALYSIS FIRST ---
         smc = SMC_Detector(df)
         smc_data = smc.analyze_all()
         
-        # Asset-specific thresholds
-        if self.asset_class == "crypto":
-            premium_threshold = 0.6  # Crypto more volatile, be lenient
-        else:
-            premium_threshold = 0.5  # Forex standard
-        
-        # Check Premium/Discount Zone (only trade shorts in premium)
-        pd_zone = smc_data['premium_discount']
-        
-        # For crypto, we're more lenient with premium zones
-        if self.asset_class == "crypto":
-            valid_zones = ['Premium', 'Premium (Weak)', 'Equilibrium']
-        else:
-            valid_zones = ['Premium', 'Premium (Weak)']
-        
-        if pd_zone['zone'] not in valid_zones:
-            return {
-                "verdict": "NO TRADE",
-                "reason": f"Not in Premium Zone (Current: {pd_zone['zone']})",
-                "data": {"smc_zone": pd_zone['zone'], "instrument": self.instrument_name},
-                "smc": smc_data
-            }
-        
-        # Check for Bullish MSS (avoid shorts)
-        mss = smc_data['market_structure_shift']
-        if mss and mss['type'] == 'Bullish MSS':
-            return {
-                "verdict": "NO TRADE",
-                "reason": "Bullish Market Structure Shift detected",
-                "data": {},
-                "smc": smc_data
-            }
-        
-        # --- CHECK NEWS ---
+        # --- CHECK NEWS (Global Filter) ---
         mins_to_event, event_name = get_seconds_to_impact(self.news_df)
         if mins_to_event <= 15:
             return {
@@ -65,8 +34,7 @@ class MarketAnalyst:
         current_candle = df.iloc[-1]
         prev_candle = df.iloc[-2]
         
-        # --- STEP 1: HTF CONTEXT ---
-        # Simple trend filter: Price < 50 SMA AND Price < 200 SMA = Bearish
+        # --- STEP 1: HTF CONTEXT (Trend) ---
         sma_50 = df['Close'].rolling(window=50).mean().iloc[-1]
         sma_200 = df['Close'].rolling(window=200).mean().iloc[-1]
         
@@ -76,84 +44,167 @@ class MarketAnalyst:
             trend = "Bullish"
         else:
             trend = "Ranging"
-            
-        if trend == "Bullish":
-            return {"verdict": "NO TRADE", "reason": "Strong Bullish Momentum", "data": {}}
 
-        # --- STEP 2: LIQUIDITY & EXHAUSTION ---
-        # Detect simple liquidity sweep: Current High > Previous 10 Highs but Close < Open (Rejection)
+        # === SHORT ANALYSIS (Original) ===
+        if self.target_direction in ['SHORT', 'BOTH']:
+            if trend == "Bullish":
+                # For SHORT, we abort if bullish (unless in BOTH mode we just skip to checking LONG)
+                if self.target_direction == 'SHORT':
+                    return {"verdict": "NO TRADE", "reason": "Strong Bullish Momentum", "data": {}}
+            
+            # If Bearish or Ranging, check for Short
+            if trend != "Bullish":
+                short_result = self._analyze_short_setup(df, smc_data, trend, current_candle, prev_candle)
+                if short_result['verdict'] == "VALID SETUP":
+                    return short_result
+                    
+        # === LONG ANALYSIS (New) ===
+        if self.target_direction in ['LONG', 'BOTH']:
+            if trend == "Bearish":
+                if self.target_direction == 'LONG':
+                    return {"verdict": "NO TRADE", "reason": "Strong Bearish Momentum", "data": {}}
+            
+            if trend != "Bearish":
+                long_result = self._analyze_long_setup(df, smc_data, trend, current_candle, prev_candle)
+                if long_result['verdict'] == "VALID SETUP":
+                    return long_result
+
+        return {"verdict": "NO TRADE", "reason": "No valid setup found in requested direction", "data": {"instrument": self.instrument_name}}
+
+    def _analyze_short_setup(self, df, smc_data, trend, current_candle, prev_candle):
+        """Original Bearish analysis logic"""
+        # Check Premium/Discount Zone
+        pd_zone = smc_data['premium_discount']
+        valid_zones = ['Premium', 'Premium (Weak)']
+        if self.asset_class == "crypto": valid_zones.append('Equilibrium')
+            
+        if pd_zone['zone'] not in valid_zones:
+            return {"verdict": "NO TRADE", "reason": f"Not in Premium Zone (Current: {pd_zone['zone']})", "data": {}, "smc": smc_data}
+
+        # Check for Bullish MSS (avoid shorts)
+        mss = smc_data['market_structure_shift']
+        if mss and mss['type'] == 'Bullish MSS':
+            return {"verdict": "NO TRADE", "reason": "Bullish Market Structure Shift detected", "data": {}, "smc": smc_data}
+
+        # Liquidity Sweep (Highs)
         lookback = 10
         recent_high = df['High'].iloc[-lookback:-1].max()
+        liquidity_event = "Local High Sweep" if current_candle['High'] > recent_high else None
         
-        liquidity_event = None
-        if current_candle['High'] > recent_high:
-            liquidity_event = "Local High Sweep"
-        
-        # Exhaustion: Large upper wick
+        # Exhaustion
         body_size = abs(current_candle['Close'] - current_candle['Open'])
         upper_wick = current_candle['High'] - max(current_candle['Close'], current_candle['Open'])
-        is_exhaustion = upper_wick > (body_size * 1.5) # Wick is 1.5x body
-        
+        is_exhaustion = upper_wick > (body_size * 1.5)
+
         if not liquidity_event:
-            return {"verdict": "NO TRADE", "reason": "No Liquidity Sweep", "data": {"instrument": self.instrument_name}}
+            return {"verdict": "NO TRADE", "reason": "No Liquidity Sweep (Highs)", "data": {}}
 
-        # --- STEP 3: CONFIRMATION METRICS ---
-        rsi_div = False
-        if current_candle['High'] > prev_candle['High'] and current_candle['RSI'] < prev_candle['RSI']:
-            rsi_div = True # Bearish Divergence
-            
+        # RSI Div
+        rsi_div = (current_candle['High'] > prev_candle['High'] and current_candle['RSI'] < prev_candle['RSI'])
+        
         if not rsi_div and not is_exhaustion:
-             return {"verdict": "NO TRADE", "reason": "No Confirmation (RSI/Wick)", "data": {}}
+            return {"verdict": "NO TRADE", "reason": "No Confirmation (RSI/Wick)", "data": {}}
 
-        # --- STEP 4: BUILD SETUP DATA FOR ML ---
-        # Calculate entry/SL/TP first
+        # Build Setup
         entry_price = current_candle['Close']
         stop_loss = current_candle['High'] + (current_candle['High'] - current_candle['Low']) * 0.1
         risk = stop_loss - entry_price
         tp1 = entry_price - (risk * 2)
         rr_ratio = (entry_price - tp1) / risk if risk > 0 else 0
         
+        # ... (ML and Validation Logic similar to before, summarized for brevity/common function)
+        return self._finalize_setup(entry_price, stop_loss, tp1, rr_ratio, "SHORT", trend, liquidity_event, is_exhaustion, rsi_div, current_candle, smc_data)
+
+    def _analyze_long_setup(self, df, smc_data, trend, current_candle, prev_candle):
+        """New Bullish analysis logic"""
+        # Check Premium/Discount Zone
+        pd_zone = smc_data['premium_discount']
+        valid_zones = ['Discount', 'Discount (Weak)'] # Cheap zones
+        if self.asset_class == "crypto": valid_zones.append('Equilibrium')
+            
+        if pd_zone['zone'] not in valid_zones:
+            return {"verdict": "NO TRADE", "reason": f"Not in Discount Zone (Current: {pd_zone['zone']})", "data": {}, "smc": smc_data}
+
+        # Check for Bearish MSS (avoid longs)
+        mss = smc_data['market_structure_shift']
+        if mss and mss['type'] == 'Bearish MSS':
+            return {"verdict": "NO TRADE", "reason": "Bearish Market Structure Shift detected", "data": {}, "smc": smc_data}
+
+        # Liquidity Sweep (Lows)
+        lookback = 10
+        recent_low = df['Low'].iloc[-lookback:-1].min()
+        liquidity_event = "Local Low Sweep" if current_candle['Low'] < recent_low else None
+        
+        # Exhaustion (Lower Wick)
+        body_size = abs(current_candle['Close'] - current_candle['Open'])
+        lower_wick = min(current_candle['Close'], current_candle['Open']) - current_candle['Low']
+        is_exhaustion = lower_wick > (body_size * 1.5)
+
+        if not liquidity_event:
+            return {"verdict": "NO TRADE", "reason": "No Liquidity Sweep (Lows)", "data": {}}
+
+        # RSI Div (Bullish: Lower Low in Price, Higher Low in RSI)
+        rsi_div = (current_candle['Low'] < prev_candle['Low'] and current_candle['RSI'] > prev_candle['RSI'])
+        
+        if not rsi_div and not is_exhaustion:
+            return {"verdict": "NO TRADE", "reason": "No Confirmation (RSI/Wick)", "data": {}}
+
+        # Build Setup
+        entry_price = current_candle['Close']
+        stop_loss = current_candle['Low'] - (current_candle['High'] - current_candle['Low']) * 0.1
+        risk = entry_price - stop_loss
+        tp1 = entry_price + (risk * 2)
+        rr_ratio = (tp1 - entry_price) / risk if risk > 0 else 0
+        
+        return self._finalize_setup(entry_price, stop_loss, tp1, rr_ratio, "LONG", trend, liquidity_event, is_exhaustion, rsi_div, current_candle, smc_data)
+
+    def _finalize_setup(self, entry, sl, tp1, rr, direction, trend, liq_event, exhaust, rsi, candle, smc_data):
         setup_data = {
             "session": "Unknown",
             "htf_trend": trend,
-            "htf_structure": "LH",
-            "key_resistance_level": float(recent_high),
-            "liquidity_event_type": liquidity_event,
-            "has_large_wick": bool(is_exhaustion),
+            "htf_structure": "LH" if direction == "SHORT" else "HL",
+            "key_resistance_level": 0.0,
+            "liquidity_event_type": liq_event,
+            "has_large_wick": bool(exhaust),
             "consecutive_bullish_candles": 0,
-            "atr_value": float(current_candle['ATR']),
-            "rsi_divergence": bool(rsi_div),
-            "vwap_distance": float(abs(current_candle['Close'] - current_candle['VWAP'])),
+            "atr_value": float(candle['ATR']),
+            "rsi_divergence": bool(rsi),
+            "vwap_distance": float(abs(candle['Close'] - candle['VWAP'])),
             "volume_spike": False,
             "spread_value": 0.0,
-            "news_event_proximity_minutes": 999
+            "news_event_proximity_minutes": 999,
+            
+            # SMC Features
+            "premium_position": float(smc_data['premium_discount']['position']),
+            "in_premium_zone": 1 if 'Premium' in smc_data['premium_discount']['zone'] else 0,
+            "bearish_ob_count": len(smc_data['order_blocks']['bearish']),
+            "bullish_ob_count": len(smc_data['order_blocks']['bullish']),
+            "fvg_count": len(smc_data['fair_value_gaps']),
+            "has_bearish_mss": 1 if (smc_data['market_structure_shift'] and smc_data['market_structure_shift']['type'] == 'Bearish MSS') else 0,
+            "has_bullish_mss": 1 if (smc_data['market_structure_shift'] and smc_data['market_structure_shift']['type'] == 'Bullish MSS') else 0
         }
         
-        # --- STEP 5: PROBABILITY (ML-Enhanced) ---
         ml_prob = self.ml_classifier.predict_success_probability(setup_data, smc_data)
-        prob_score = ml_prob
         
-        
-        # Risk Check
-        is_valid, risk_msg = self.risk_manager.validate_setup(rr_ratio, spread=0.1, prob_score=prob_score)
+        is_valid, risk_msg = self.risk_manager.validate_setup(rr, spread=0.1, prob_score=ml_prob)
         
         if not is_valid:
             return {"verdict": "NO TRADE", "reason": risk_msg, "data": setup_data}
             
         trade_plan = {
-            "direction": "SHORT",
-            "entry_zone_start": float(entry_price),
-            "entry_zone_end": float(entry_price + 1.0),
-            "stop_loss": float(stop_loss),
+            "direction": direction,
+            "entry_zone_start": float(entry),
+            "entry_zone_end": float(entry + 1.0 if direction == "SHORT" else entry - 1.0),
+            "stop_loss": float(sl),
             "tp1": float(tp1),
             "tp2": 0.0,
-            "estimated_rr": float(rr_ratio),
-            "probability_score": float(prob_score)
+            "estimated_rr": float(rr),
+            "probability_score": float(ml_prob)
         }
 
         return {
             "verdict": "VALID SETUP",
-            "reason": "All checks passed (SMC + Traditional)",
+            "reason": "All checks passed",
             "data": setup_data,
             "plan": trade_plan,
             "smc": smc_data
