@@ -1,0 +1,78 @@
+name: Multi-Asset AI Analysis (BUY)
+
+on:
+  schedule:
+    # Runs every 10 minutes, offset by 5 minutes (5, 15, 25...)
+    - cron: '5-55/10 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  analyze-markets-buy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # --- PERSISTENCE: DOWNLOAD ---
+      - name: Download database artifact (if exists)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: trading-database
+          path: .
+
+      - name: Download model artifact (if exists)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: trading-model
+          path: models
+      # -----------------------------
+      
+      - name: Initialize database
+        run: python src/main.py --mode startup
+      
+      # NOTE: We skip Email Check and Retraining here to avoid conflicts.
+      # The main (SHORT) workflow handles the learning loop.
+
+      - name: Run live analysis (LONG)
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: |
+          python src/main.py --mode live --direction LONG
+      
+      # --- PERSISTENCE: UPLOAD ---
+      - name: Upload database artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trading-database
+          path: database.db
+          retention-days: 90
+
+      # We don't upload the model here because we didn't retrain it.
+      # ---------------------------
+      
+      - name: Upload logs (on failure)
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: error-logs-buy
+          path: |
+            *.log
+            **/*.log
+          retention-days: 7
