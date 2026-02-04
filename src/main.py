@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--mode', choices=['live', 'review', 'startup'], required=True, help="Operating Mode")
     parser.add_argument('--session', choices=['LONDON', 'NEW_YORK'], help="Current Trading Session")
     parser.add_argument('--symbol', help="Specific symbol to analyze (optional, e.g., 'XAU/USD')")
+    parser.add_argument('--direction', choices=['SHORT', 'LONG', 'BOTH'], default='SHORT', help="Trading Direction")
     
     args = parser.parse_args()
     
@@ -57,7 +58,7 @@ def main():
             args.session = detected_session
             print(Fore.CYAN + f"Session Auto-Detected: {args.session}")
 
-        print(Fore.YELLOW + f"Starting Multi-Asset Analysis for {args.session} Session...")
+        print(Fore.YELLOW + f"Starting Multi-Asset Analysis ({args.direction}) for {args.session} Session...")
         
         # 1. Init Risk Manager & Check
         is_safe, msg = risk_manager.can_trade()
@@ -100,7 +101,8 @@ def main():
             analyst = MarketAnalyst(
                 risk_manager,
                 instrument_name=instrument['display_name'],
-                asset_class=instrument['asset_class']
+                asset_class=instrument['asset_class'],
+                target_direction=args.direction
             )
             result = analyst.analyze_market(df)
             
@@ -122,7 +124,8 @@ def main():
                 valid_setups.append({
                     'instrument': instrument['display_name'],
                     'plan': result['plan'],
-                    'data': setup_data
+                    'data': setup_data,
+                    'trade_id': snapshot_id
                 })
             else:
                 print(Fore.RED + f"\n❌ {result['verdict']}")
@@ -136,7 +139,7 @@ def main():
             
             # For now, send individual emails (we'll create multi-asset email next)
             for setup in valid_setups:
-                send_trade_alert(setup['plan'], setup['data'])
+                send_trade_alert(setup['plan'], setup['data'], trade_id=setup['trade_id'])
         else:
             print(Fore.YELLOW + f"\nNo valid setups found across {len(instruments)} instrument(s)")
 
