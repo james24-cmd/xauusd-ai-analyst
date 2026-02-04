@@ -25,24 +25,47 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
+      # --- PERSISTENCE: DOWNLOAD ---
       - name: Download database artifact (if exists)
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           name: trading-database
           path: .
+
+      - name: Download model artifact (if exists)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: trading-model
+          path: models
+      # -----------------------------
       
       - name: Initialize database
         run: python src/main.py --mode startup
       
+      # --- FEEDBACK LOOP ---
+      - name: Check for User Feedback (Email)
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: python src/email_checker.py
+        continue-on-error: true # Don't stop if email fails
+        
+      - name: Retrain AI Model
+        run: python src/train_model.py
+        continue-on-error: true
+      # ---------------------
+
       - name: Run live analysis
         env:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
         run: |
-          python src/main.py --mode live
+          python src/main.py --mode live --direction SHORT
       
+      # --- PERSISTENCE: UPLOAD ---
       - name: Upload database artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -50,6 +73,15 @@ jobs:
           name: trading-database
           path: database.db
           retention-days: 90
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trading-model
+          path: models
+          retention-days: 90
+      # ---------------------------
       
       - name: Upload logs (on failure)
         uses: actions/upload-artifact@v4
