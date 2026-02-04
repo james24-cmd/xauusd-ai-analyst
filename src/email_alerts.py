@@ -26,13 +26,14 @@ def load_email_config():
     with open(CONFIG_PATH, 'r') as f:
         return json.load(f)
 
-def send_trade_alert(trade_plan: dict, market_data: dict):
+def send_trade_alert(trade_plan: dict, market_data: dict, trade_id: int = None):
     """
     Send an email alert when a valid trade setup is detected.
     
     Args:
         trade_plan: Dict with entry, SL, TP, RR, etc.
         market_data: Dict with current price, trend, session info.
+        trade_id: Database ID for this trade (for outcome tracking)
     """
     config = load_email_config()
     
@@ -49,6 +50,7 @@ def send_trade_alert(trade_plan: dict, market_data: dict):
     sl = trade_plan.get('stop_loss', 0)
     tp1 = trade_plan.get('tp1', 0)
     rr = trade_plan.get('estimated_rr', 0)
+    instrument = market_data.get('instrument', 'XAUUSD')
     
     sl_distance = abs(entry - sl)
     
@@ -58,22 +60,47 @@ def send_trade_alert(trade_plan: dict, market_data: dict):
     # Suggested leverage based on lot size (rough estimate)
     suggested_leverage = min(100, max(10, int(lot_size * 10)))
     
+    # Create mailto links for one-click tracking
+    sender_email = config['sender_email']
+    tracking_subject = f"OUTCOME: {instrument} Trade #{trade_id}"
+    
+    win_link = f"mailto:{sender_email}?subject={tracking_subject}&body=WIN%20%23{trade_id}"
+    loss_link = f"mailto:{sender_email}?subject={tracking_subject}&body=LOSS%20%23{trade_id}"
+    breakeven_link = f"mailto:{sender_email}?subject={tracking_subject}&body=BREAKEVEN%20%23{trade_id}"
+    partial_link = f"mailto:{sender_email}?subject={tracking_subject}&body=PARTIAL%20%23{trade_id}"
+    
+    # Determine Logic based on Direction
+    direction = trade_plan.get('direction', 'SHORT')
+    is_long = direction == 'LONG'
+    
+    # Theme Colors
+    color_main = "#00ff88" if is_long else "#ff6b6b" # Green for Long, Red for Short
+    color_sl = "#ff4444" # Always Red for SL
+    color_tp = "#00ff88" # Always Green for TP
+    title_color = "#00ff88" if is_long else "#e94560"
+    
+    # Emojis & Titles
+    emoji_action = "LONG ⬆️" if is_long else "SHORT ⬇️"
+    emoji_signal = "🟢" if is_long else "📉"
+    
     # Create email content
-    subject = f"🚨 XAUUSD SHORT ALERT - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    subject = f"🚨 {instrument} {direction} ALERT - TRADE #{trade_id}" if trade_id else f"🚨 {instrument} {direction} ALERT"
     
     html_body = f"""
     <html>
     <body style="font-family: Arial, sans-serif; background-color: #1a1a2e; color: #eaeaea; padding: 20px;">
         <div style="max-width: 600px; margin: auto; background: #16213e; border-radius: 10px; padding: 20px;">
-            <h1 style="color: #e94560; text-align: center;">📉 XAUUSD SHORT SIGNAL</h1>
+            <h1 style="color: {title_color}; text-align: center;">{emoji_signal} {instrument} {direction} SIGNAL</h1>
+            
+            {f'<div style="text-align: center; background: #0f3460; padding: 10px; border-radius: 5px; margin-bottom: 15px;"><h3 style="color: {color_main}; margin: 0;">TRADE ID: #{trade_id}</h3></div>' if trade_id else ''}
             
             <div style="background: #0f3460; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                <h2 style="color: #00ff88; margin-top: 0;">📊 Trade Details</h2>
+                <h2 style="color: {color_main}; margin-top: 0;">📊 Trade Details</h2>
                 <table style="width: 100%; color: #eaeaea;">
-                    <tr><td><b>Direction:</b></td><td style="color: #ff6b6b;">SHORT ⬇️</td></tr>
+                    <tr><td><b>Direction:</b></td><td style="color: {color_main};"><b>{emoji_action}</b></td></tr>
                     <tr><td><b>Entry Zone:</b></td><td>${entry:.2f} - ${trade_plan.get('entry_zone_end', entry):.2f}</td></tr>
-                    <tr><td><b>Stop Loss:</b></td><td style="color: #ff4444;">${sl:.2f}</td></tr>
-                    <tr><td><b>Take Profit 1:</b></td><td style="color: #00ff88;">${tp1:.2f}</td></tr>
+                    <tr><td><b>Stop Loss:</b></td><td style="color: {color_sl};">${sl:.2f}</td></tr>
+                    <tr><td><b>Take Profit 1:</b></td><td style="color: {color_tp};">${tp1:.2f}</td></tr>
                     <tr><td><b>Risk:Reward:</b></td><td>1:{rr:.1f}</td></tr>
                 </table>
             </div>
@@ -98,13 +125,32 @@ def send_trade_alert(trade_plan: dict, market_data: dict):
                 </table>
             </div>
             
-            <div style="text-align: center; margin-top: 20px; padding: 15px; background: #e94560; border-radius: 8px;">
-                <p style="margin: 0; font-weight: bold;">⚠️ MANUAL EXECUTION REQUIRED</p>
-                <p style="margin: 5px 0; font-size: 0.9em;">This is an analysis alert, NOT financial advice.</p>
+            {f'''
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px; margin: 20px 0;">
+                <h2 style="color: white; margin-top: 0; text-align: center;">🎯 ONE-CLICK OUTCOME TRACKING</h2>
+                <p style="text-align: center; color: white; margin-bottom: 15px;">Click a button below when your trade completes:</p>
+                
+                <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                    <a href="{win_link}" style="display: inline-block; background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 5px;">✅ WIN</a>
+                    <a href="{loss_link}" style="display: inline-block; background: #ef4444; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 5px;">❌ LOSS</a>
+                    <a href="{breakeven_link}" style="display: inline-block; background: #f59e0b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 5px;">➖ BREAKEVEN</a>
+                    <a href="{partial_link}" style="display: inline-block; background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 5px;">📊 PARTIAL</a>
+                </div>
+                
+                <p style="text-align: center; color: white; font-size: 0.85em; margin-top: 15px; opacity: 0.9;">
+                    Clicking a button will open your email app with a pre-filled message.<br/>
+                    Just click Send to record the outcome! 🧠
+                </p>
+            </div>
+            ''' if trade_id else ''}
+            
+            <div style="text-align: center; margin-top: 20px; padding: 15px; background: {title_color}; border-radius: 8px;">
+                <p style="margin: 0; font-weight: bold; color: {'#000' if is_long else '#fff'}">⚠️ MANUAL EXECUTION REQUIRED</p>
+                <p style="margin: 5px 0; font-size: 0.9em; color: {'#000' if is_long else '#fff'}">This is an analysis alert, NOT financial advice.</p>
             </div>
             
             <p style="text-align: center; color: #888; font-size: 0.8em; margin-top: 20px;">
-                Generated by XAUUSD AI Terminal | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
+                Generated by Multi-Asset AI Terminal | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
             </p>
         </div>
     </body>
