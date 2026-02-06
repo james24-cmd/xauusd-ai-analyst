@@ -35,15 +35,15 @@ class MarketAnalyst:
         prev_candle = df.iloc[-2]
         
         # --- STEP 1: HTF CONTEXT (Trend) ---
+        # RELAXED: Only check 50 SMA for trend direction
         sma_50 = df['Close'].rolling(window=50).mean().iloc[-1]
-        sma_200 = df['Close'].rolling(window=200).mean().iloc[-1]
         
-        if current_candle['Close'] < sma_50 and current_candle['Close'] < sma_200:
+        if current_candle['Close'] < sma_50:
             trend = "Bearish"
-        elif current_candle['Close'] > sma_50 and current_candle['Close'] > sma_200:
+        elif current_candle['Close'] > sma_50:
             trend = "Bullish"
         else:
-            trend = "Ranging"
+            trend = "Ranging" # Rare to be exact match
 
         # === SHORT ANALYSIS (Original) ===
         if self.target_direction in ['SHORT', 'BOTH']:
@@ -75,9 +75,9 @@ class MarketAnalyst:
         """Original Bearish analysis logic"""
         # Check Premium/Discount Zone
         pd_zone = smc_data['premium_discount']
-        valid_zones = ['Premium', 'Premium (Weak)']
-        if self.asset_class == "crypto": valid_zones.append('Equilibrium')
-            
+        # RELAXED: Allow Equilibrium for all assets
+        valid_zones = ['Premium', 'Premium (Weak)', 'Equilibrium']
+        
         if pd_zone['zone'] not in valid_zones:
             return {"verdict": "NO TRADE", "reason": f"Not in Premium Zone (Current: {pd_zone['zone']})", "data": {}, "smc": smc_data}
 
@@ -94,7 +94,8 @@ class MarketAnalyst:
         # Exhaustion
         body_size = abs(current_candle['Close'] - current_candle['Open'])
         upper_wick = current_candle['High'] - max(current_candle['Close'], current_candle['Open'])
-        is_exhaustion = upper_wick > (body_size * 1.5)
+        # RELAXED: Reduced from 1.5x to 1.0x
+        is_exhaustion = upper_wick >= (body_size * 1.0)
 
         if not liquidity_event:
             return {"verdict": "NO TRADE", "reason": "No Liquidity Sweep (Highs)", "data": {}}
@@ -119,9 +120,9 @@ class MarketAnalyst:
         """New Bullish analysis logic"""
         # Check Premium/Discount Zone
         pd_zone = smc_data['premium_discount']
-        valid_zones = ['Discount', 'Discount (Weak)'] # Cheap zones
-        if self.asset_class == "crypto": valid_zones.append('Equilibrium')
-            
+        # RELAXED: Allow Equilibrium for all assets
+        valid_zones = ['Discount', 'Discount (Weak)', 'Equilibrium']
+        
         if pd_zone['zone'] not in valid_zones:
             return {"verdict": "NO TRADE", "reason": f"Not in Discount Zone (Current: {pd_zone['zone']})", "data": {}, "smc": smc_data}
 
@@ -138,7 +139,8 @@ class MarketAnalyst:
         # Exhaustion (Lower Wick)
         body_size = abs(current_candle['Close'] - current_candle['Open'])
         lower_wick = min(current_candle['Close'], current_candle['Open']) - current_candle['Low']
-        is_exhaustion = lower_wick > (body_size * 1.5)
+        # RELAXED: Reduced from 1.5x to 1.0x
+        is_exhaustion = lower_wick >= (body_size * 1.0)
 
         if not liquidity_event:
             return {"verdict": "NO TRADE", "reason": "No Liquidity Sweep (Lows)", "data": {}}
