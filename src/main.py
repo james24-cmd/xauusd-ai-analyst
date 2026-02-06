@@ -79,6 +79,7 @@ def main():
             print(Fore.CYAN + f"Analyzing single instrument: {args.symbol}")
         
         valid_setups = []
+        valid_setups_log = []
         
         # 2. Loop through each instrument
         for instrument in instruments:
@@ -130,7 +131,8 @@ def main():
             else:
                 print(Fore.RED + f"\n❌ {result['verdict']}")
                 print(f"Reason: {result['reason']}")
-        
+                valid_setups_log.append(f"{instrument['display_name']}: {result['verdict']} - {result['reason']}")
+
         # 5. Send consolidated email if any setups found
         if valid_setups:
             print(Fore.GREEN + f"\n{'='*50}")
@@ -142,6 +144,9 @@ def main():
                 send_trade_alert(setup['plan'], setup['data'], trade_id=setup['trade_id'])
         else:
             print(Fore.YELLOW + f"\nNo valid setups found across {len(instruments)} instrument(s)")
+            print(Fore.YELLOW + "Analysis Summary:")
+            for log in valid_setups_log:
+                print(Fore.YELLOW + f"  - {log}")
 
 if __name__ == "__main__":
     main()
