@@ -63,6 +63,7 @@ class SetupSuccessClassifier:
         )
         self.scaler = StandardScaler()
         print("[ML Classifier] New model created (untrained)")
+        self._save_model()  # Ensure file exists for artifact upload
     
     def extract_features(self, market_data: Dict, smc_data: Dict) -> pd.DataFrame:
         """
